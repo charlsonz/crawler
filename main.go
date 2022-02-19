@@ -1,50 +1,29 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
-	"golang.org/x/text/transform"
-	"io/ioutil"
-	"log"
-	"net/http"
-
-	"golang.org/x/net/html/charset"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/unicode"
+	"github.com/charlsonz/crawler/config"
+	"github.com/charlsonz/crawler/engine"
+	"github.com/charlsonz/crawler/persist"
+	"github.com/charlsonz/crawler/scheduler"
+	"github.com/charlsonz/crawler/xcar/parser"
 )
 
+const urlCar = "https://www.xcar.com.cn/"
+
 func main() {
-	resp, err := http.Get("https://www.xcar.com.cn/")
+	itemChan, err := persist.ItemSaver(config.ElasticIndex)
 	if err != nil {
 		panic(err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		fmt.Errorf("http resp err: %v", err)
-		return
+	e := engine.ConcurrentEngine{
+		Scheduler:        &scheduler.QueuedScheduler{},
+		WorkerCount:      10,
+		ItemChan:         itemChan,
+		RequestProcessor: engine.Worker,
 	}
-
-	bodyReader := bufio.NewReader(resp.Body)
-	e := determineEncoding(bodyReader)
-	utf8Reader := transform.NewReader(bodyReader, e.NewDecoder())
-
-	all, err := ioutil.ReadAll(utf8Reader)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("%s\n", all)
-}
-
-// determineEncoding 确定网页的编码格式，默认是utf-8
-func determineEncoding(bufReader *bufio.Reader) encoding.Encoding {
-	bytes, err := bufReader.Peek(1024)
-	if err != nil {
-		log.Printf("fetcher err: %v", err)
-		return unicode.UTF8
-	}
-
-	e, _, _ := charset.DetermineEncoding(bytes, "")
-
-	return e
+	e.Run(engine.Request{
+		Url:    urlCar,
+		Parser: engine.NewFuncParser(parser.ParseCarList, config.ParseCarList),
+	})
 }
